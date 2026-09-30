@@ -24,22 +24,16 @@ except Exception as e:
     st.error(f"Failed to load the model file. Please ensure 'polyphenol_screener.pkl' is uploaded. Error: {e}")
     st.stop()
 
-# ==========================================
-# RE-ENGINEERED: Universal Multi-Target Profiling Engine
-# ==========================================
+# Universal Multi-Target Profiling Engine
 def predict_protein_targets_universal(mol):
-    """Dynamically parses any molecule structure to predict interactions across multiple target classes."""
     predictions = []
-    
-    # Extract baseline molecular descriptors for rule-based matching
     mw = Descriptors.MolWt(mol)
     logp = Descriptors.MolLogP(mol)
     aromatic_rings = Lipinski.NumAromaticRings(mol)
     rotatable_bonds = Lipinski.NumRotatableBonds(mol)
     hbd = Lipinski.NumHDonors(mol)
     
-    # 1. KINASE INHIBITOR SUPERFAMILY PROFILING (e.g., EGFR, VEGFR, JAK)
-    # Characterised by flat, rigid aromatic scaffolds with hydrogen-bonding hinges
+    # 1. KINASE INHIBITOR SUPERFAMILY PROFILING
     if aromatic_rings >= 2 and hbd >= 2 and mw <= 450:
         predictions.append({
             "Target Superfamily": "Kinase Receptors (EGFR, VEGFR, Tyrosine Kinases)",
@@ -48,8 +42,7 @@ def predict_protein_targets_universal(mol):
             "Confidence Match": "HIGH (Aromatic Hinge-Binding Motif Detected)"
         })
 
-    # 2. ION CHANNELS & RIGID RECEPTORS (e.g., GABAA, PAFR, hERG)
-    # Characterised by rigid, dense polycyclic aliphatic cage architectures (like Ginkgolide B)
+    # 2. ION CHANNELS & RIGID RECEPTORS (e.g., Ginkgolide B)
     if aromatic_rings == 0 and rotatable_bonds <= 2 and Lipinski.FractionCSP3(mol) >= 0.60:
         predictions.append({
             "Target Superfamily": "Ion Channels & Rigid Receptors (PAFR, GABAA, Cys-Loop)",
@@ -58,8 +51,7 @@ def predict_protein_targets_universal(mol):
             "Confidence Match": "HIGH (Rigid Polycyclic Aliphatic Architecture Detected)"
         })
 
-    # 3. PROTEASE THERAPEUTICS (e.g., 3CLpro, Viral Proteases, Cathepsins)
-    # Characterised by peptide-like or peptide-mimetic amide configurations
+    # 3. PROTEASE THERAPEUTICS
     amide_pattern = Chem.MolFromSmarts('[NX3][CX3](=[OX1])')
     if mol.HasSubstructMatch(amide_pattern) or (mw >= 350 and hbd >= 3):
         predictions.append({
@@ -69,8 +61,7 @@ def predict_protein_targets_universal(mol):
             "Confidence Match": "MEDIUM (Peptide-Mimetic Coordination Footprint Detected)"
         })
 
-    # 4. GPCRs & METABOLIC REGULATORS (e.g., COX-2, SIRT1, PPAR)
-    # Characterised by core polyphenol clusters or multi-ring diaryl networks
+    # 4. GPCRs & METABOLIC REGULATORS
     if aromatic_rings >= 2 and logp >= 1.5 and logp <= 4.5:
         predictions.append({
             "Target Superfamily": "GPCRs & Metabolic Responders (COX-2, SIRT1, PPAR-gamma)",
@@ -89,9 +80,19 @@ def process_molecule(smiles):
     fp_bitvector = fp_gen.GetFingerprint(mol)
     fp_array = np.zeros((0,), dtype=np.int8)
     Chem.DataStructs.ConvertToNumpyArray(fp_bitvector, fp_array)
+    
     pred = loaded_screener.predict([fp_array])
     prob = loaded_screener.predict_proba([fp_array])
-    confidence_value = prob if pred == 1 else prob
+    
+    # DEFINITIVE FIX: Extract numerical scalar value for active probability (index 1) to eliminate format string exceptions
+    try:
+        confidence_scalar = float(prob[0][1]) if pred[0] == 1 else float(prob[0][0])
+    except:
+        try:
+            confidence_scalar = float(prob[1]) if pred == 1 else float(prob[0])
+        except:
+            confidence_scalar = float(np.max(prob))
+            
     mw = Descriptors.MolWt(mol)
     logp = Descriptors.MolLogP(mol)
     hbd = Descriptors.NumHDonors(mol)
@@ -104,14 +105,13 @@ def process_molecule(smiles):
     lipinski = "PASSED" if violations <= 1 else "FAILED"
     mutagenic = "SAFE" if not mol.HasSubstructMatch(Chem.MolFromSmarts('[NX3](=[OX1])=[OX1]')) else "ALERT (Mutagenic)"
     cardio = "SAFE" if not mol.HasSubstructMatch(Chem.MolFromSmarts('[NX3,NX4][CX4H2]c1ccccc1')) else "ALERT (hERG)"
-    status = "APPROVED LEAD" if (pred == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
+    status = "APPROVED LEAD" if (pred[0] == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
     
-    # Call the new Universal target profiling engine
     target_hits = predict_protein_targets_universal(mol)
     
     return {
-        "AI_Prediction": "ACTIVE" if pred == 1 else "INACTIVE",
-        "Confidence": f"{confidence_value * 100:.1f}%",
+        "AI_Prediction": "ACTIVE" if pred[0] == 1 else "INACTIVE",
+        "Confidence": f"{confidence_scalar * 100:.1f}%",
         "MW (Da)": float(f"{mw:.1f}"),
         "LogP": float(f"{logp:.2f}"),
         "Lipinski": lipinski,
@@ -160,7 +160,7 @@ if option == "Single Compound Lookup":
             if res["Target_Hits"]:
                 df_targets = pd.DataFrame(res["Target_Hits"])
                 st.dataframe(df_targets, use_container_width=True, hide_index=True)
-                st.caption("ℹ️ Targets are generated dynamically by evaluating the query molecule's chemical constraints, atom ratios, functional fragments, and steric topologies.")
+                st.caption("ℹ nighttime Target protein interactions are inferred by evaluating the query molecule's structural constraints.")
             else:
                 st.info("No matching structural class indicators could be verified for this compound configuration.")
         else:
@@ -179,7 +179,7 @@ elif option == "Batch CSV Processing":
             for _, row in df_uploaded.iterrows():
                 res = process_molecule(row['SMILES'])
                 if res:
-                    target_names = ", ".join([t["Target Superfamily"].split(" (") for t in res["Target_Hits"]]) if res["Target_Hits"] else "None Classified"
+                    target_names = ", ".join([t["Target Superfamily"] for t in res["Target_Hits"]]) if res["Target_Hits"] else "None Detected"
                     results_list.append({
                         "Name": row['Name'], "AI_Prediction": res["AI_Prediction"], "Confidence": res["Confidence"],
                         "MW": res["MW (Da)"], "LogP": res["LogP"], "Lipinski": res["Lipinski"],
