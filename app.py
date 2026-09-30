@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 from rdkit import Chem
-from rdkit.Chem import Descriptors, rdFingerprintGenerator
+from rdkit.Chem import Descriptors, rdFingerprintGenerator, Lipinski
 from rdkit.Chem.Draw import MolsToGridImage
 
 # App Configuration & Branding
@@ -44,6 +44,12 @@ def process_molecule(smiles):
     hbd = Descriptors.NumHDonors(mol)
     hba = Descriptors.NumHAcceptors(mol)
     
+    # NEW: Advanced Structural Counters
+    aromatic_rings = Lipinski.NumAromaticRings(mol)
+    rotatable_bonds = Lipinski.NumRotatableBonds(mol)
+    heavy_atoms = Lipinski.HeavyAtomCount(mol)
+    fraction_csp3 = Lipinski.FractionCSP3(mol) # Measures 3D complexity
+    
     violations = sum([mw >= 500, logp >= 5, hbd > 5, hba > 10])
     lipinski = "PASSED" if violations <= 1 else "FAILED"
     
@@ -54,7 +60,7 @@ def process_molecule(smiles):
     status = "APPROVED LEAD" if (pred == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
     
     # Safely unpack probability array
-    prob_val = prob[0][1] if (hasinstance(prob, np.ndarray) and prob.ndim > 1) else prob[0]
+    prob_val = prob[0][1] if (isinstance(prob, np.ndarray) and prob.ndim > 1) else prob
     
     return {
         "AI_Prediction": "ACTIVE" if pred == 1 else "INACTIVE",
@@ -65,7 +71,12 @@ def process_molecule(smiles):
         "Ames_Mutagenicity": mutagenic,
         "hERG_Cardio": cardio,
         "Verdict": status,
-        "Mol_Object": mol
+        "Mol_Object": mol,
+        # New descriptors packed here
+        "Aromatic_Rings": aromatic_rings,
+        "Rotatable_Bonds": rotatable_bonds,
+        "Heavy_Atoms": heavy_atoms,
+        "Fraction_CSP3": f"{fraction_csp3:.2f}"
     }
 
 # User Workspace Options
@@ -83,6 +94,17 @@ if option == "Single Compound Lookup":
             with col1:
                 img = MolsToGridImage([res["Mol_Object"]], subImgSize=(300, 300))
                 st.image(img, caption=comp_name)
+                
+                # NEW Visual Layout: Structural Descriptors Dashboard Panel
+                st.markdown("### 📊 Extended Structural Descriptors")
+                d_col1, d_col2 = st.columns(2)
+                with d_col1:
+                    st.metric("Aromatic Rings count", res["Aromatic_Rings"])
+                    st.metric("Heavy Atom count", res["Heavy_Atoms"])
+                with d_col2:
+                    st.metric("Rotatable Bonds count", res["Rotatable_Bonds"])
+                    st.metric("3D Complexity (Fsp3)", res["Fraction_CSP3"])
+                    
             with col2:
                 st.metric("AI Confidence Score", res["Confidence"], delta=res["AI_Prediction"])
                 st.write(f"**Lipinski Profile:** {res['Lipinski']} (MW: {res['MW (Da)']} | LogP: {res['LogP']})")
@@ -113,7 +135,10 @@ elif option == "Batch CSV Processing":
                     results_list.append({
                         "Name": row['Name'], "AI_Prediction": res["AI_Prediction"], "Confidence": res["Confidence"],
                         "MW": res["MW (Da)"], "LogP": res["LogP"], "Lipinski": res["Lipinski"],
-                        "Ames": res["Ames_Mutagenicity"], "hERG": res["hERG_Cardio"], "Verdict": res["Verdict"]
+                        "Ames": res["Ames_Mutagenicity"], "hERG": res["hERG_Cardio"], 
+                        "Aromatic_Rings": res["Aromatic_Rings"], "Rotatable_Bonds": res["Rotatable_Bonds"], # New rows added
+                        "Heavy_Atoms": res["Heavy_Atoms"], "Fsp3_Complexity": res["Fraction_CSP3"],
+                        "Verdict": res["Verdict"]
                     })
                     if res["Verdict"] == "APPROVED LEAD" and len(mols_to_draw) < 6:
                         mols_to_draw.append(res["Mol_Object"])
@@ -128,6 +153,6 @@ elif option == "Batch CSV Processing":
                 st.image(grid_img)
                 
             csv_download = df_out.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Screening Report CSV", data=csv_download, file_name="screening_report.csv", mime='text/csv')
+            st.download_button("📥 Download Enhanced Screening Report CSV", data=csv_download, file_name="enhanced_screening_report.csv", mime='text/csv')
         else:
             st.error("Missing headers! Ensure the uploaded document includes 'Name' and 'SMILES' columns.")
