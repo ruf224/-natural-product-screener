@@ -160,7 +160,7 @@ if option == "Single Compound Lookup":
             if res["Target_Hits"]:
                 df_targets = pd.DataFrame(res["Target_Hits"])
                 st.dataframe(df_targets, use_container_width=True, hide_index=True)
-                st.caption("ℹ nighttime Target protein interactions are inferred by evaluating the query molecule's structural constraints.")
+                st.caption("ℹ Target protein interactions are inferred by evaluating the query molecule's structural constraints.")
             else:
                 st.info("No matching structural class indicators could be verified for this compound configuration.")
         else:
