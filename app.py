@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import plotly.express as px  # NEW: Interactive graphing engine
 from rdkit import Chem
 from rdkit.Chem import Descriptors, rdFingerprintGenerator, Lipinski
 from rdkit.Chem.Draw import MolsToGridImage
@@ -44,11 +45,11 @@ def process_molecule(smiles):
     hbd = Descriptors.NumHDonors(mol)
     hba = Descriptors.NumHAcceptors(mol)
     
-    # NEW: Advanced Structural Counters
+    # Advanced Structural Counters
     aromatic_rings = Lipinski.NumAromaticRings(mol)
     rotatable_bonds = Lipinski.NumRotatableBonds(mol)
     heavy_atoms = Lipinski.HeavyAtomCount(mol)
-    fraction_csp3 = Lipinski.FractionCSP3(mol) # Measures 3D complexity
+    fraction_csp3 = Lipinski.FractionCSP3(mol)
     
     violations = sum([mw >= 500, logp >= 5, hbd > 5, hba > 10])
     lipinski = "PASSED" if violations <= 1 else "FAILED"
@@ -60,23 +61,22 @@ def process_molecule(smiles):
     status = "APPROVED LEAD" if (pred == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
     
     # Safely unpack probability array
-    prob_val = prob[0][1] if (isinstance(prob, np.ndarray) and prob.ndim > 1) else prob
+    prob_val = prob if (isinstance(prob, np.ndarray) and prob.ndim > 1) else prob
     
     return {
         "AI_Prediction": "ACTIVE" if pred == 1 else "INACTIVE",
         "Confidence": f"{prob_val * 100:.1f}%",
-        "MW (Da)": f"{mw:.1f}",
-        "LogP": f"{logp:.2f}",
+        "MW (Da)": float(f"{mw:.1f}"),  # Float casting for Plotly mapping
+        "LogP": float(f"{logp:.2f}"),
         "Lipinski": lipinski,
         "Ames_Mutagenicity": mutagenic,
         "hERG_Cardio": cardio,
         "Verdict": status,
         "Mol_Object": mol,
-        # New descriptors packed here
         "Aromatic_Rings": aromatic_rings,
         "Rotatable_Bonds": rotatable_bonds,
         "Heavy_Atoms": heavy_atoms,
-        "Fraction_CSP3": f"{fraction_csp3:.2f}"
+        "Fraction_CSP3": float(f"{fraction_csp3:.2f}")
     }
 
 # User Workspace Options
@@ -95,7 +95,6 @@ if option == "Single Compound Lookup":
                 img = MolsToGridImage([res["Mol_Object"]], subImgSize=(300, 300))
                 st.image(img, caption=comp_name)
                 
-                # NEW Visual Layout: Structural Descriptors Dashboard Panel
                 st.markdown("### 📊 Extended Structural Descriptors")
                 d_col1, d_col2 = st.columns(2)
                 with d_col1:
@@ -136,7 +135,7 @@ elif option == "Batch CSV Processing":
                         "Name": row['Name'], "AI_Prediction": res["AI_Prediction"], "Confidence": res["Confidence"],
                         "MW": res["MW (Da)"], "LogP": res["LogP"], "Lipinski": res["Lipinski"],
                         "Ames": res["Ames_Mutagenicity"], "hERG": res["hERG_Cardio"], 
-                        "Aromatic_Rings": res["Aromatic_Rings"], "Rotatable_Bonds": res["Rotatable_Bonds"], # New rows added
+                        "Aromatic_Rings": res["Aromatic_Rings"], "Rotatable_Bonds": res["Rotatable_Bonds"],
                         "Heavy_Atoms": res["Heavy_Atoms"], "Fsp3_Complexity": res["Fraction_CSP3"],
                         "Verdict": res["Verdict"]
                     })
@@ -145,14 +144,43 @@ elif option == "Batch CSV Processing":
                         legends.append(f"{row['Name']} ({res['Confidence']})")
             
             df_out = pd.DataFrame(results_list)
-            st.dataframe(df_out, use_container_width=True)
             
-            if mols_to_draw:
-                st.subheader("🖼️ Top Structural Leads Matrix")
-                grid_img = MolsToGridImage(mols_to_draw, molsPerRow=3, subImgSize=(250, 250), legends=legends)
-                st.image(grid_img)
+            # Divide Batch view layout dynamically into interactive components
+            tab1, tab2 = st.tabs(["📋 Data Metrics Table", "📈 Chemical Space Visualization"])
+            
+            with tab1:
+                st.dataframe(df_out, use_container_width=True)
+                if mols_to_draw:
+                    st.subheader("🖼️ Top Structural Leads Matrix")
+                    grid_img = MolsToGridImage(mols_to_draw, molsPerRow=3, subImgSize=(250, 250), legends=legends)
+                    st.image(grid_img)
+                    
+                csv_download = df_out.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Enhanced Screening Report CSV", data=csv_download, file_name="enhanced_screening_report.csv", mime='text/csv')
+            
+            with tab2:
+                st.subheader("🔬 Druggability Chemical Space (Molecular Weight vs. LogP)")
+                st.markdown("This plot maps your compound library into chemical space coordinates. The shaded boundary marks the ideal drug-like sector.")
                 
-            csv_download = df_out.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download Enhanced Screening Report CSV", data=csv_download, file_name="enhanced_screening_report.csv", mime='text/csv')
+                # NEW: Build an interactive Plotly scatter map layout
+                fig = px.scatter(
+                    df_out, 
+                    x="MW", 
+                    y="LogP", 
+                    color="Verdict",
+                    hover_name="Name",
+                    hover_data=["AI_Prediction", "Confidence", "Lipinski", "Aromatic_Rings"],
+                    color_discrete_map={"APPROVED LEAD": "#2ecc71", "REJECTED / RISK FLAG": "#e74c3c"},
+                    labels={"MW": "Molecular Weight (Da)", "LogP": "Lipophilicity (LogP)"}
+                )
+                
+                # Add horizontal and vertical Lipinski safety threshold lines
+                fig.add_hline(y=5.0, line_dash="dash", line_color="orange", annotation_text="Lipinski LogP Limit (5.0)")
+                fig.add_vline(x=500.0, line_dash="dash", line_color="orange", annotation_text="Lipinski MW Limit (500 Da)")
+                
+                # Adjust chart formatting settings
+                fig.update_layout(template="plotly_white", hovermode="closest")
+                st.plotly_chart(fig, use_container_width=True)
+                
         else:
             st.error("Missing headers! Ensure the uploaded document includes 'Name' and 'SMILES' columns.")
