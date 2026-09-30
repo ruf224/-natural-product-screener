@@ -82,11 +82,11 @@ def process_molecule(smiles):
     fp_array = np.zeros((0,), dtype=np.int8)
     Chem.DataStructs.ConvertToNumpyArray(fp_bitvector, fp_array)
     
-    pred = loaded_screener.predict([fp_array])[0]
-    prob = loaded_screener.predict_proba([fp_array])[0]
+    pred = loaded_screener.predict([fp_array])
+    prob = loaded_screener.predict_proba([fp_array])
     
-    # FIX: Correctly grab the confidence scalar value for the class that was predicted
-    confidence_value = prob[1] if pred == 1 else prob[0]
+    # Correctly grab the confidence scalar value for the class that was predicted
+    confidence_value = prob[0][1] if pred[0] == 1 else prob[0][0]
     
     # ADMET Metrics
     mw = Descriptors.MolWt(mol)
@@ -107,12 +107,12 @@ def process_molecule(smiles):
     mutagenic = "SAFE" if not mol.HasSubstructMatch(Chem.MolFromSmarts('[NX3](=[OX1])=[OX1]')) else "ALERT (Mutagenic)"
     cardio = "SAFE" if not mol.HasSubstructMatch(Chem.MolFromSmarts('[NX3,NX4][CX4H2]c1ccccc1')) else "ALERT (hERG)"
     
-    status = "APPROVED LEAD" if (pred == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
+    status = "APPROVED LEAD" if (pred[0] == 1 and lipinski == "PASSED" and mutagenic == "SAFE" and cardio == "SAFE") else "REJECTED / RISK FLAG"
     
     target_hits = predict_protein_targets(mol)
     
     return {
-        "AI_Prediction": "ACTIVE" if pred == 1 else "INACTIVE",
+        "AI_Prediction": "ACTIVE" if pred[0] == 1 else "INACTIVE",
         "Confidence": f"{confidence_value * 100:.1f}%",
         "MW (Da)": float(f"{mw:.1f}"),
         "LogP": float(f"{logp:.2f}"),
@@ -190,7 +190,7 @@ elif option == "Batch CSV Processing":
             for _, row in df_uploaded.iterrows():
                 res = process_molecule(row['SMILES'])
                 if res:
-                    target_names = ", ".join([t["Predicted Target Protein"].split(" (")[0] for t in res["Target_Hits"]]) if res["Target_Hits"] else "None Detected"
+                    target_names = ", ".join([t["Predicted Target Protein"] for t in res["Target_Hits"]]) if res["Target_Hits"] else "None Detected"
                     
                     results_list.append({
                         "Name": row['Name'], "AI_Prediction": res["AI_Prediction"], "Confidence": res["Confidence"],
@@ -202,7 +202,7 @@ elif option == "Batch CSV Processing":
                         "Verdict": res["Verdict"]
                     })
                     if res["Verdict"] == "APPROVED LEAD" and len(mols_to_draw) < 6:
-                        mols_to_draw.append(res["Mol_Object"])
+mols_to_draw.append(res["Mol_Object"])
 legends.append(f"{row['Name']} ({res['Confidence']})")
 df_out = pd.DataFrame(results_list)
 tab1, tab2 = st.tabs(["📋 Data Metrics Table", "📈 Chemical Space Visualization"])
